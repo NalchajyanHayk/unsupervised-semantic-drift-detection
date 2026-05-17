@@ -1,0 +1,6 @@
+.cursor/
+venv/
+.venv/
+data/IMDB_reviews.json
+.DS_Store
+data/encoded/
