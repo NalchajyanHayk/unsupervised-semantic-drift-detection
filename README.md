@@ -31,6 +31,11 @@ The project uses these encoders:
 │       ├── reviews_encoded_all-MiniLM-L6-v2.csv
 │       ├── reviews_encoded_LaBSE.csv
 │       └── reviews_encoded_distilbert-base-multilingual-cased.csv
+├── outputs/
+│   ├── figures/
+│   ├── tables/
+│   ├── models/
+│   └── logs/
 ├── paper/
 │   ├── main.tex
 │   ├── references.bib
@@ -76,6 +81,7 @@ The project uses these encoders:
 - `project/visualization/`: plotting, table export, and visualization regeneration
 - `project/execution/`: runnable entry points for full pipeline, reduced models, and visualization-only workflows
 - `data/`: raw and encoded datasets
+- `outputs/`: generated model artifacts, tables, figures, and logs created when the pipeline runs
 - `paper/`: paper assets and LaTeX files
 
 ## Required Software and Libraries
