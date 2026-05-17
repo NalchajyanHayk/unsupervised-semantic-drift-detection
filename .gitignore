@@ -5,3 +5,5 @@ data/IMDB_reviews.json
 .DS_Store
 data/encoded/
 data/processed/
+data/raw_data/
+__pycache__/
