@@ -18,7 +18,7 @@ echo "Running end-to-end pipeline on the first 300,000 raw reviews..."
 echo "Encoded outputs: $ENCODED_DIR"
 echo "Model and figure outputs: $OUTPUT_DIR"
 
-"$PYTHON_BIN" code/execution/run_pipeline.py \
+"$PYTHON_BIN" project/execution/run_pipeline.py \
   --raw-json data/IMDB_reviews.json \
   --encoded-dir "$ENCODED_DIR" \
   --input-files \
@@ -32,7 +32,7 @@ echo "Model and figure outputs: $OUTPUT_DIR"
 echo
 echo "Refreshing visualization outputs from generated tables..."
 
-"$PYTHON_BIN" code/execution/run_visualizations.py \
+"$PYTHON_BIN" project/execution/run_visualizations.py \
   --output-dir "$OUTPUT_DIR" \
   --names MiniLM LaBSE DistilBERT
 
