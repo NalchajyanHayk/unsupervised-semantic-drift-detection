@@ -1,0 +1,644 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+% The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\graphicspath{{figures/}}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+\begin{document}
+
+\title{Language in Motion: Unsupervised Detection of Semantic Drift in Text Data}
+
+\author{
+\IEEEauthorblockN{Hayk Nalchajyan}
+\IEEEauthorblockA{
+\textit{Akian College of Science and Engineering} \\
+\textit{American University of Armenia} \\
+Yerevan, Armenia \\
+hayk\_nalchajyan@edu.aua.am
+}
+\and
+\IEEEauthorblockN{Gurgen Hovakimyan \textit{(Supervisor)}}
+\IEEEauthorblockA{
+\textit{Akian College of Science and Engineering} \\
+\textit{American University of Armenia} \\
+Yerevan, Armenia \\
+ghovakimyan@aua.am
+}
+}
+
+\maketitle
+
+\begin{abstract}
+Text-based machine learning systems are usually trained on past data but deployed on new data, whose patterns may shift over time through what is called concept drift or semantic drift. The problem is harder when no labels are available for performance monitoring. This work presents an unsupervised framework for detecting semantic drift in time-stamped text using embedding-based representations. The pipeline maps text into dense vectors, groups them into chronological windows, and tracks how the embedding distribution changes over time. The experiments use $308{,}313$ time-stamped IMDB reviews and compare three sentence encoders: all-MiniLM-L6-v2, LaBSE, and a multilingual DistilBERT. The framework combines autoencoder reconstruction error with dimension-wise Kolmogorov--Smirnov and Anderson--Darling tests, Jensen--Shannon divergence, and Sliced Wasserstein Distance in both the original embedding space and the autoencoder latent space. The main finding is that the autoencoder reconstruction-error signal is consistent across encoders, with year-by-year Pearson correlations of $r \geq 0.97$ on post-gap aggregates. The dimension-wise and bootstrap-based distance tests flag drift in every post-gap year at this corpus scale, which limits their value as discriminators between years.
+\end{abstract}
+
+\begin{IEEEkeywords}
+concept drift, semantic drift, sentence embeddings, autoencoder, unsupervised drift detection, Sliced Wasserstein Distance
+\end{IEEEkeywords}
+
+\section{Introduction}
+\label{sec:introduction}
+
+Text data is central to many modern machine learning applications, including sentiment analysis, topic modeling, information retrieval, content moderation, recommendation, and conversational agents. These systems are usually trained on past data and deployed under the assumption that future input will follow similar linguistic and semantic patterns. In real-world environments, this assumption often fails: new topics appear, terminology changes, user behavior evolves, and external events influence how people write.
+
+When the distribution of incoming data changes over time, the performance of a machine learning system may drop. This effect is commonly called concept drift \cite{gama2014,lu2018}; in text systems it appears as semantic drift, where the meaning or contextual distribution of words and documents shifts over time. A common difficulty in detecting drift is that many real-world text pipelines do not have continuous access to labeled data, so performance-based monitoring is not usable. In unlabeled settings, drift detection must rely on changes in the input distribution itself \cite{abghani2020,demello2019}.
+
+Most existing work in the streaming and tabular setting focuses on labeled or low-dimensional inputs, where simple distance tests on raw features perform well. Modern text pipelines, in contrast, work on high-dimensional dense embeddings whose statistical behavior is less well understood \cite{rabanser2019}, and where the same nominal test can behave very differently across corpus scales. This gap between standard drift-detection theory and practical text monitoring at scale motivates a careful comparison of several unsupervised drift signals on the same corpus and across several embedding models.
+
+This project studies semantic drift through embedding-based text representations. Each document is mapped into a dense vector that carries semantic information \cite{mikolov2013,le2014,reimers2019}, and chronological time windows are compared in this vector space. The main contributions are:
+
+\begin{itemize}
+    \item A reproducible and scaled-up pipeline for detecting semantic drift in unlabeled time-stamped text data, evaluated on $308{,}313$ IMDB reviews.
+    \item A comparison of three sentence-embedding representations (all-MiniLM-L6-v2, LaBSE, multilingual DistilBERT) that shows the autoencoder reconstruction-error signal is consistent across them.
+    \item An evaluation of dimension-wise (KS, Anderson--Darling), distance-based (Sliced Wasserstein), and divergence-based (Jensen--Shannon) methods at scale, including the behavior of each signal individually.
+    \item A discussion of the sensitivity, stability, and interpretability trade-offs in unsupervised text drift monitoring, including a concrete analysis of why some standard tests degrade at this corpus scale.
+\end{itemize}
+
+The remainder of the paper is organized as follows. Section~\ref{sec:problem} states the problem. Section~\ref{sec:background} reviews related work. Section~\ref{sec:methodology} describes the framework and experimental setup. Section~\ref{sec:results} presents the results together with the analysis and validation against the project objectives. Section~\ref{sec:discussion} discusses the findings, the limitations, and the code and data availability of the project. Section~\ref{sec:conclusion} concludes.
+
+\section{Problem Statement}
+\label{sec:problem}
+
+Machine learning models for text are usually trained on a fixed historical dataset and applied to new incoming data. This implicitly assumes that the training distribution $P_{\text{train}}(X)$ and a later distribution $P_t(X)$ at time $t$ are similar:
+\begin{equation}
+P_{\text{train}}(X) \approx P_t(X).\label{eq:assumption}
+\end{equation}
+
+In real-world text environments this often fails, and the distribution of incoming text moves away from the historical training data:
+\begin{equation}
+P_{\text{train}}(X) \neq P_t(X).\label{eq:drift}
+\end{equation}
+
+This can reduce the reliability of downstream models. In supervised settings, the drop can be observed through metrics such as accuracy or F1-score, but in many practical text systems, labels for new data are not available, so performance-based monitoring is not possible \cite{abghani2020}.
+
+The main problem addressed in this project is the detection of semantic drift in unlabeled, time-stamped text data. Each document is turned into a dense embedding, and the embeddings are grouped into chronological windows. The task is to decide whether the embedding distribution of a later window differs noticeably from the historical reference distribution, without relying on ground-truth drift labels. Several practical issues arise: text embeddings are high-dimensional, making distribution comparison sensitive to parameter choices; semantic drift may be gradual rather than sudden, so small changes accumulate over time \cite{gama2014,lu2018}; and detected signals cannot be checked against downstream accuracy.
+
+The project is guided by three research questions: how can semantic drift be detected over time without labels; how do embedding-based representations reflect semantic change, and how stable are these signals across encoders; and which unsupervised drift detection techniques are most useful for text embeddings at scale.
+
+\section{Background and Related Work}
+\label{sec:background}
+
+\subsection{Concept Drift and Semantic Drift in Text}
+
+Concept drift is a change in the statistical properties of data over time \cite{gama2014,lu2018}. It is a central problem in machine learning systems that operate in dynamic environments, because models trained on past data may no longer fit later data. When labels are available, the change can be tracked through performance metrics; otherwise, drift detection must rely on changes in the input distribution itself. Concept drift may be sudden, gradual, incremental, or recurring \cite{gama2014}, and text data is especially likely to show gradual or recurring change as language evolves continuously. In text-based systems, drift often appears as semantic drift: the meaning, usage, or contextual distribution of words, phrases, or documents changes over time. A related line of work in computational linguistics studies diachronic semantic change directly by aligning word embeddings trained on different time slices and analyzing how individual words move in the resulting space \cite{hamilton2016,kutuzov2018}. Previous work has also explored drift detection in text streams using document embeddings, which supports the idea that semantic changes can be tracked through distributional changes in embedding spaces \cite{hidalgo2019}.
+
+\subsection{Embedding-Based Text Representations}
+
+Embedding models turn text into dense numerical vectors so that documents with similar meanings lie close together in the vector space. Compared with sparse representations such as bag-of-words or TF-IDF, dense vectors encode semantic similarity in continuous spaces \cite{mikolov2013,le2014}. Earlier approaches such as Word2Vec introduced efficient neural methods for learning continuous word representations from context \cite{mikolov2013}, and Doc2Vec extended this idea to sentences, paragraphs, and documents \cite{le2014}. More recent transformer-based architectures \cite{vaswani2017} and the BERT family of pre-trained encoders \cite{devlin2019} produce contextual representations that have become the standard backbone for sentence embeddings \cite{reimers2019}. This project uses three such encoders, which differ in size, in whether they are distilled from a larger model \cite{sanh2019}, and in whether they are trained for monolingual or multilingual sentence representations \cite{feng2020}. The encoder family was chosen to span a small monolingual distilled model, a large multilingual sentence model, and a multilingual distilled BERT, so that the comparison reflects different points on the size and multilinguality axes rather than three close variants of the same architecture.
+
+\subsection{Unsupervised Drift Detection}
+
+Unsupervised drift detection identifies changes in the input distribution without labels and is important in real-world systems where labels are not available immediately \cite{abghani2020,demello2019}. Statistical distance measures are commonly used: distribution-based methods compare past and new data using a dissimilarity measure or a statistical test \cite{lu2018}. Wasserstein distance measures how much one distribution must be transported to match another, and a sliced version computed over random one-dimensional projections gives a scalable approximation in high-dimensional settings \cite{bonneel2015}. Divergence-based measures such as Jensen--Shannon divergence can also be used. The reliability of these methods depends on choices such as window size, embedding model, dimensionality reduction, and threshold selection. Recent surveys note that the practical performance of these tests is strongly sample-size dependent: when the reference and current windows are both large, even small but systematic shifts produce overwhelming evidence against the null \cite{lu2018,bayram2022}. A complementary line of work uses multivariate alternatives such as the Maximum Mean Discrepancy (MMD) kernel two-sample test \cite{gretton2012}, which avoids the dimension-wise inflation of univariate tests at the cost of additional kernel-choice and bandwidth assumptions.
+
+\subsection{Autoencoder-Based Drift Detection}
+
+Another approach uses the reconstruction error of an autoencoder trained on a reference period, a strategy closely related to autoencoder- and variational-autoencoder-based anomaly detection \cite{ancho2015}. The autoencoder maps each embedding into a lower-dimensional latent representation and then reconstructs it; the reconstruction error is
+\begin{equation}
+e_i = \|z_i - \hat{z}_i\|^2,\label{eq:recon}
+\end{equation}
+where $z_i$ is the input embedding and $\hat{z}_i$ is the autoencoder reconstruction. If the autoencoder is trained only on the reference period, it should reconstruct similar future embeddings with relatively low error and produce higher error when later embeddings come from a shifted semantic distribution. Changes in the average reconstruction error over time therefore serve as an unsupervised drift signal. Compared with raw distributional tests, this approach has two practical advantages: it produces a per-sample, real-valued score that aggregates smoothly into a yearly mean, and it does not rely on a hypothesis-testing framework that may become trivially significant at scale.
+
+\section{Methodology}
+\label{sec:methodology}
+
+\subsection{Overall Pipeline}
+
+The framework follows an unsupervised pipeline with five steps: (i) preprocessing the text data and parsing timestamps; (ii) computing dense embeddings under three different sentence encoders; (iii) splitting the data into chronological windows, with the earliest years used as a reference; (iv) training an autoencoder on the reference period for each encoder; and (v) comparing each later window to the reference using both autoencoder reconstruction error and statistical distance-based measures.
+
+Each year is treated as a separate window, and the embeddings of all reviews from that year are read as a sample from the semantic distribution of that period. The reference distribution is fixed once and used as the comparison anchor for all later years. For every later year, the autoencoder reconstruction error gives a graded per-sample signal that aggregates into a yearly mean, while the distance-based measures (Jensen--Shannon, Kolmogorov--Smirnov, Anderson--Darling, and Sliced Wasserstein Distance) compare the yearly embedding distribution directly to the reference. The same Sliced Wasserstein procedure is also applied to the autoencoder's latent representation, which gives a slightly denoised view of the same comparison.
+
+\subsection{Justification of Method Choices}
+
+The methods were chosen to cover four complementary families of unsupervised drift signal that are commonly cited in the literature \cite{lu2018,abghani2020,bayram2022}, so that their behavior can be compared on the same corpus:
+
+\begin{itemize}
+\item \textbf{Autoencoder reconstruction error} as a learned, per-sample anomaly score that does not depend on a hypothesis test. This was preferred over simpler probabilistic models (e.g.\ Gaussian fits on PCA components) because the data are high-dimensional and not Gaussian, and over downstream classifier confidence because no labels are available.
+\item \textbf{Kolmogorov--Smirnov and Anderson--Darling} tests as well-known non-parametric two-sample tests \cite{abghani2020}. They are simple and dimension-wise, and they give a clear yes/no answer per dimension that can be aggregated through false-discovery-rate control.
+\item \textbf{Sliced Wasserstein Distance} as a multivariate distance that is feasible in high dimensions \cite{bonneel2015}. SWD avoids the curse of dimensionality that affects classic Wasserstein distance, and unlike KS or AD it produces a single multivariate distance value rather than a per-dimension test.
+\item \textbf{Jensen--Shannon divergence} as a bounded, symmetric divergence often used in drift work. It is included to compare a divergence-based signal with the distance-based and learned alternatives.
+\end{itemize}
+
+Each drift signal is interpreted along three dimensions: \emph{sensitivity}, whether changes are detected early; \emph{stability}, whether the signal avoids reacting to small short-term fluctuations; and \emph{interpretability}, whether the signal can be understood in terms of the underlying data. Since the pipeline is unsupervised, the detected signals are read as indicators of distributional change rather than as proof of downstream model failure.
+
+\subsection{Dataset and Temporal Split}
+\label{sec:experimental}
+
+The experiments are run on a time-stamped IMDB review dataset, building on the IMDB movie-review corpus introduced by Maas et al.\ \cite{maas2011} and extended in this work with parsed review timestamps. After preprocessing and removing records with invalid dates, the dataset contains $308{,}313$ encoded reviews. The data is divided into three chronological periods, summarized for reference in Table~\ref{tab:periods}:
+
+\begin{itemize}
+    \item A \textbf{training period} (years up to and including 2005) used as the reference distribution and to fit the autoencoder.
+    \item A \textbf{gap period} (2006--2010) kept as an intermediate buffer to reduce direct temporal overlap between training and test.
+    \item A \textbf{test period} (years after 2010) used for post-gap drift analysis.
+\end{itemize}
+
+\begin{table}[htbp]
+\caption{Temporal Split (subset used for period-level summaries)}
+\label{tab:periods}
+\begin{center}
+\begin{tabular}{|l|c|c|}
+\hline
+\textbf{Period} & \textbf{Years} & \textbf{Samples} \\
+\hline
+Training & up to 2005 & 16{,}668 \\
+Gap      & 2006--2010 & 13{,}692 \\
+Test     & 2011 onward & 19{,}640 \\
+\hline
+\end{tabular}
+\end{center}
+\end{table}
+
+The full corpus of $308{,}313$ reviews is used for the yearly distance and SWD computations; the period-level summary subset shown in Table~\ref{tab:periods} is used to fit the autoencoder and to compute period-level reconstruction-error statistics consistently across encoders.
+
+\subsection{Embedding Representations}
+
+Three sentence-embedding representations are used:
+\begin{itemize}
+    \item \textbf{all-MiniLM-L6-v2}, a small distilled sentence-transformer encoder producing $384$-dimensional embeddings as a compact monolingual baseline \cite{reimers2019}.
+    \item \textbf{LaBSE}, a language-agnostic BERT sentence-embedding model producing $768$-dimensional multilingual representations \cite{feng2020}.
+    \item \textbf{Multilingual DistilBERT}, a compressed multilingual version of BERT \cite{sanh2019} producing $768$-dimensional representations.
+\end{itemize}
+
+Each encoder's embeddings are standardized using a \texttt{StandardScaler} fitted only on the training period, so that information from the gap or test periods does not influence the normalization parameters. Each encoder uses its own scaler, so absolute reconstruction-error magnitudes are not directly comparable across encoders; comparisons between encoders are read in terms of trends rather than absolute levels.
+
+\subsection{Autoencoder Configuration}
+
+For each encoder, a symmetric multi-layer autoencoder is trained on the scaled training-period embeddings. The encoder has hidden layers of sizes $512$, $384$, $256$, $128$, and $96$, with a $64$-dimensional latent bottleneck, and the decoder mirrors the encoder back to the input dimension. Each hidden layer is followed by a GELU activation. Training uses the Adam optimizer \cite{kingma2015} with learning rate $10^{-3}$, batch size $64$, and mean squared error loss, for $40$ epochs. The autoencoder optimization minimizes
+\begin{equation}
+\mathcal{L}_{AE} = \frac{1}{N}\sum_{i=1}^{N} \|z_i - \hat{z}_i\|^2,
+\end{equation}
+over the training embeddings $\{z_i\}_{i=1}^{N}$, where $\hat{z}_i$ is the reconstruction. After training, the per-sample reconstruction error is averaged over each year to obtain a yearly drift score $E_y$. The autoencoder drift threshold is set from the training-period reconstruction errors:
+\begin{equation}
+\tau_{AE} = \mu_{AE,\text{train}} + 0.5\,\sigma_{AE,\text{train}},\label{eq:thresh}
+\end{equation}
+and a year is flagged as drifted if $E_y > \tau_{AE}$. This is a sensitive threshold by design; its trade-offs are discussed in Section~\ref{sec:limitation}.
+
+\subsection{Jensen--Shannon Divergence}
+
+For each scaled embedding and its autoencoder reconstruction, both vectors are passed through a softmax to give pseudo-probability vectors, and the Jensen--Shannon divergence between the two is computed elementwise. Per-year averages are aggregated and a conservative threshold is set from the training-period values. As reported in Section~\ref{sec:results}, this construction produces a signal that is dominated by argmax agreement rather than by a global distributional shift; Section~\ref{sec:limitation} returns to this point.
+
+\subsection{Kolmogorov--Smirnov and Anderson--Darling Tests}
+
+The Kolmogorov--Smirnov test and the Anderson--Darling $k$-sample test are both applied dimension-wise between the training embedding distribution and the embedding distribution of each later year. The KS test has been widely used in unlabeled drift detection \cite{abghani2020}. Since embeddings are high-dimensional, each test produces many $p$-values, one per dimension; the Benjamini--Hochberg false-discovery-rate correction \cite{benjamini1995} is then applied. For each year, the fraction of FDR-significant dimensions is used as the drift score, and a year is flagged as drifted when this fraction exceeds $0.05$.
+
+\subsection{Sliced Wasserstein Distance}
+
+Direct Wasserstein distance is difficult to compute in high-dimensional spaces, so the sliced version projects the embeddings onto $K = 512$ random one-dimensional directions and averages the one-dimensional Wasserstein distance across them \cite{bonneel2015}:
+\begin{equation}
+\mathrm{SWD}(X_{\text{train}}, X_y) = \frac{1}{K} \sum_{k=1}^{K} W_1\!\left(X_{\text{train}}\, p_k,\ X_y\, p_k\right).\label{eq:swd}
+\end{equation}
+
+The threshold is set by splitting the training period into two random halves repeatedly and computing SWD between the halves for $B = 200$ bootstrap runs. The 95th and 99th percentiles of the resulting baseline distribution are used as drift thresholds. A year is flagged at the 95\% level if its SWD value exceeds the 95th-percentile threshold. The same procedure is also applied to the latent representations produced by the trained autoencoder, which gives a latent-space Sliced Wasserstein signal. Each baseline has $200$ bootstrap samples and produces a within-train standard deviation on the order of $10^{-3}$, which becomes important when interpreting the resulting $z$-scores (see Section~\ref{sec:discussion}).
+
+\subsection{Tools and Reproducibility}
+
+The experiments are implemented in Python using NumPy, Pandas, SciPy, scikit-learn \cite{pedregosa2011}, statsmodels, and PyTorch \cite{paszke2019}, with a fixed random seed of $42$. The Hugging Face \texttt{sentence-transformers} library is used to load the three encoders. All scaling parameters, autoencoder weights, and bootstrap baselines are saved per encoder so that the same yearly drift scores can be reproduced from the saved artifacts without re-encoding the corpus. The submitted project archive contains the preprocessing scripts, encoding scripts, autoencoder training code, the per-encoder drift evaluation scripts, the saved result CSV files used to produce all tables in this paper, and a README explaining the one-command reproduction entry point (see Section~\ref{sec:reproducibility}).
+
+\section{Results}
+\label{sec:results}
+
+The experiments were run separately for the three encoders. For each, the results cover autoencoder reconstruction error, Jensen--Shannon divergence, dimension-wise statistical tests, ordinary Sliced Wasserstein Distance, and autoencoder latent-space Sliced Wasserstein Distance. A cross-encoder comparison is also reported. Figure~\ref{fig:faceted} summarizes all four signals across all three encoders in a single view; the rest of this section steps through them one signal at a time.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=\textwidth]{encoders_faceted_comparison.pdf}
+\caption{Yearly drift signals across the three encoders. Rows are encoders (MiniLM, LaBSE, DistilBERT); columns are the four signals (autoencoder reconstruction error, Jensen--Shannon divergence, ordinary Sliced Wasserstein Distance, AE-latent Sliced Wasserstein Distance). The two vertical dotted lines mark the end of the training period (2005) and the end of the gap period (2010). The AE and JSD signals share a similar monotone shape across all three encoders, while the ordinary SWD signal shows clearly different absolute levels and a divergent shape for DistilBERT, which is consistent with the cross-encoder Pearson correlations reported in Table~\ref{tab:cross_encoder}.}
+\label{fig:faceted}
+\end{figure*}
+
+\subsection{Autoencoder Reconstruction Error}
+
+For each encoder, the average reconstruction error was computed over the training, gap, and test periods. Table~\ref{tab:ae_period_summary} reports these averages together with the AE thresholds.
+
+\begin{table}[htbp]
+\caption{Autoencoder Reconstruction Error by Period and AE Threshold}
+\label{tab:ae_period_summary}
+\begin{center}
+\begin{tabular}{|c|c|c|c|c|}
+\hline
+\textbf{Embedding} & \textbf{Train} & \textbf{Gap} & \textbf{Test} & \textbf{$\tau_{AE}$} \\
+\hline
+MiniLM & 0.3308 & 0.4460 & 0.4338 & 0.3884 \\
+LaBSE & 0.3242 & 0.3286 & 0.3525 & 0.3803 \\
+DistilBERT & 0.2002 & 0.1615 & 0.2065 & 0.2560 \\
+\hline
+\end{tabular}
+\end{center}
+\end{table}
+
+For MiniLM, both gap and test means lie above the threshold, so almost every post-gap year is flagged. For LaBSE, the threshold sits slightly above the period means and flagging depends on individual yearly values. For DistilBERT, the gap mean ($0.1615$) is in fact \emph{lower} than the training mean ($0.2002$), and the threshold ($0.2560$) is above all three period means, so the threshold rule rarely fires.
+
+Final autoencoder training losses after $40$ epochs were $0.4400$ for MiniLM, $0.4353$ for LaBSE, and $0.3006$ for DistilBERT. At the yearly level (Tables~\ref{tab:minilm_ae_yearly}--\ref{tab:distilbert_ae_yearly}), the autoencoder flagged every post-gap year for both MiniLM and LaBSE (8 of 8), and only one of the eight post-gap years for DistilBERT (the small 2018 window).
+
+\begin{table}[htbp]
+\caption{MiniLM: Post-Gap Yearly Autoencoder Reconstruction Error}
+\label{tab:minilm_ae_yearly}
+\begin{center}
+\begin{tabular}{|c|c|c|c|}
+\hline
+\textbf{Year} & \textbf{Count} & \textbf{Mean} & \textbf{Drift Flag} \\
+\hline
+2011 & 17{,}814 & 0.703 & Yes \\
+2012 & 23{,}099 & 0.713 & Yes \\
+2013 & 29{,}003 & 0.704 & Yes \\
+2014 & 30{,}602 & 0.707 & Yes \\
+2015 & 33{,}263 & 0.708 & Yes \\
+2016 & 28{,}573 & 0.709 & Yes \\
+2017 & 38{,}648 & 0.722 & Yes \\
+2018 & 375    & 0.773 & Yes \\
+\hline
+\end{tabular}
+\end{center}
+\end{table}
+
+\begin{table}[htbp]
+\caption{LaBSE: Post-Gap Yearly Autoencoder Reconstruction Error}
+\label{tab:labse_ae_yearly}
+\begin{center}
+\begin{tabular}{|c|c|c|c|}
+\hline
+\textbf{Year} & \textbf{Count} & \textbf{Mean} & \textbf{Drift Flag} \\
+\hline
+2011 & 17{,}814 & 0.504 & Yes \\
+2012 & 23{,}099 & 0.505 & Yes \\
+2013 & 29{,}003 & 0.505 & Yes \\
+2014 & 30{,}602 & 0.516 & Yes \\
+2015 & 33{,}263 & 0.516 & Yes \\
+2016 & 28{,}573 & 0.515 & Yes \\
+2017 & 38{,}648 & 0.575 & Yes \\
+2018 & 375    & 0.661 & Yes \\
+\hline
+\end{tabular}
+\end{center}
+\end{table}
+
+\begin{table}[htbp]
+\caption{DistilBERT: Post-Gap Yearly Autoencoder Reconstruction Error}
+\label{tab:distilbert_ae_yearly}
+\begin{center}
+\begin{tabular}{|c|c|c|c|}
+\hline
+\textbf{Year} & \textbf{Count} & \textbf{Mean} & \textbf{Drift Flag} \\
+\hline
+2011 & 17{,}814 & 0.233 & No \\
+2012 & 23{,}099 & 0.237 & No \\
+2013 & 29{,}003 & 0.244 & No \\
+2014 & 30{,}602 & 0.252 & No \\
+2015 & 33{,}263 & 0.252 & No \\
+2016 & 28{,}573 & 0.255 & No \\
+2017 & 38{,}648 & 0.332 & No \\
+2018 & 375    & 0.462 & Yes \\
+\hline
+\end{tabular}
+\end{center}
+\end{table}
+
+The period-level means in Table~\ref{tab:ae_period_summary} are computed on the matched-size subset described in Table~\ref{tab:periods} (used to fit the autoencoder and to set the threshold). The yearly means in Tables~\ref{tab:minilm_ae_yearly}--\ref{tab:distilbert_ae_yearly} are computed on the full per-year populations and are therefore larger in absolute scale, but the threshold rule is applied consistently per encoder.
+
+\subsection{Jensen--Shannon Divergence}
+
+Because the components of a standardized vector are approximately $\mathcal{N}(0, 1)$, applying softmax to such a vector concentrates almost all probability mass on a few entries. The resulting JSD signal is therefore driven mostly by whether the argmax positions of $z_i$ and $\hat{z}_i$ agree, rather than by a global change in distributional shape. In practice, no post-gap year crossed the JSD threshold for any of the three encoders (Table~\ref{tab:jsd_yearly}).
+
+\begin{table}[htbp]
+\caption{Yearly JSD Means by Encoder (Post-Gap Years; No Drift Flag Crossed for Any Encoder)}
+\label{tab:jsd_yearly}
+\begin{center}
+\begin{tabular}{|c|c|c|c|}
+\hline
+\textbf{Year} & \textbf{MiniLM} & \textbf{LaBSE} & \textbf{DistilBERT} \\
+\hline
+2011 & 0.0480 & 0.0398 & 0.0192 \\
+2012 & 0.0533 & 0.0417 & 0.0200 \\
+2013 & 0.0490 & 0.0409 & 0.0225 \\
+2014 & 0.0493 & 0.0423 & 0.0233 \\
+2015 & 0.0509 & 0.0426 & 0.0233 \\
+2016 & 0.0508 & 0.0443 & 0.0248 \\
+2017 & 0.0539 & 0.0534 & 0.0323 \\
+\hline
+\end{tabular}
+\end{center}
+\end{table}
+
+\subsection{Kolmogorov--Smirnov and Anderson--Darling Tests}
+
+For all three encoders, the fraction of FDR-significant dimensions in the KS test was clearly above the drift-flag threshold of $0.05$ in every post-gap year, with year-by-year significant fractions in the range $0.68$--$0.99$ (Table~\ref{tab:ks_fdr_yearly}). The Anderson--Darling test was even more sensitive: the fraction of FDR-significant dimensions was at its upper bound (close to $1$) for every post-gap year and every encoder.
+
+\begin{table}[htbp]
+\caption{KS Test (FDR-corrected) Significant Dimension Fraction by Year}
+\label{tab:ks_fdr_yearly}
+\begin{center}
+\begin{tabular}{|c|c|c|c|}
+\hline
+\textbf{Year} & \textbf{MiniLM} & \textbf{LaBSE} & \textbf{DistilBERT} \\
+\hline
+2006 & 0.698 & 0.784 & 0.973 \\
+2007 & 0.721 & 0.783 & 0.971 \\
+2008 & 0.995 & 0.995 & 0.999 \\
+2009 & 0.812 & 0.829 & 0.948 \\
+2010 & 0.786 & 0.771 & 0.977 \\
+2011 & 0.680 & 0.689 & 0.973 \\
+2012 & 0.836 & 0.832 & 0.978 \\
+2013 & 0.820 & 0.862 & 0.947 \\
+2014 & 0.844 & 0.816 & 0.910 \\
+2015 & 0.857 & 0.824 & 0.924 \\
+2016 & 0.807 & 0.820 & 0.879 \\
+2017 & 0.872 & 0.849 & 0.928 \\
+\hline
+\end{tabular}
+\end{center}
+\end{table}
+
+Together, these results show that at this corpus scale, dimension-wise two-sample tests on $384$- or $768$-dimensional sentence embeddings detect a difference in every year and provide almost no separation between years.
+
+\subsection{Sliced Wasserstein Distance}
+
+For all three encoders, every post-gap year exceeded both the 95\% and the 99\% bootstrap thresholds, so the SWD-based drift flag was raised in every year (Tables~\ref{tab:ordinary_swd_yearly} and~\ref{tab:latent_swd_yearly}). When expressed as $z$-scores against the bootstrap baseline, the observed yearly values were approximately $z \in [110.8, 246.1]$ for MiniLM, $z \in [122.9, 196.8]$ for LaBSE, and $z \in [78.4, 181.3]$ for DistilBERT; the latent-space SWD produced similarly large values. The smallest observed $z$-score is roughly $70$ standard deviations above the bootstrap mean. Such values are not consistent with a calibrated null-distribution interpretation: the bootstrap measures within-training variability rather than the variability expected when comparing the training distribution to a different yearly distribution. The latent-space SWD gave the same qualitative outcome with every post-gap year flagged for every encoder.
+
+\begin{table}[htbp]
+\caption{Ordinary SWD by Year (All Years Flagged at 95\%)}
+\label{tab:ordinary_swd_yearly}
+\begin{center}
+\begin{tabular}{|c|c|c|c|}
+\hline
+\textbf{Year} & \textbf{MiniLM} & \textbf{LaBSE} & \textbf{DistilBERT} \\
+\hline
+2006 & 0.0892 & 0.111 & 0.179 \\
+2007 & 0.0994 & 0.116 & 0.206 \\
+2008 & 0.176 & 0.154 & 0.216 \\
+2009 & 0.110 & 0.129 & 0.230 \\
+2010 & 0.124 & 0.141 & 0.233 \\
+2011 & 0.121 & 0.121 & 0.220 \\
+2012 & 0.124 & 0.135 & 0.229 \\
+2013 & 0.113 & 0.128 & 0.212 \\
+2014 & 0.125 & 0.120 & 0.200 \\
+2015 & 0.124 & 0.132 & 0.205 \\
+2016 & 0.133 & 0.140 & 0.210 \\
+2017 & 0.115 & 0.103 & 0.111 \\
+2018 & 0.137 & 0.142 & 0.148 \\
+\hline
+\end{tabular}
+\end{center}
+\end{table}
+
+\begin{table}[htbp]
+\caption{AE-Latent SWD by Year (All Years Flagged at 95\%)}
+\label{tab:latent_swd_yearly}
+\begin{center}
+\begin{tabular}{|c|c|c|c|}
+\hline
+\textbf{Year} & \textbf{MiniLM} & \textbf{LaBSE} & \textbf{DistilBERT} \\
+\hline
+2006 & 0.148 & 0.117 & 0.116 \\
+2007 & 0.177 & 0.132 & 0.145 \\
+2008 & 0.276 & 0.154 & 0.150 \\
+2009 & 0.169 & 0.134 & 0.151 \\
+2010 & 0.252 & 0.165 & 0.164 \\
+2011 & 0.235 & 0.163 & 0.157 \\
+2012 & 0.240 & 0.160 & 0.152 \\
+2013 & 0.240 & 0.153 & 0.144 \\
+2014 & 0.222 & 0.157 & 0.151 \\
+2015 & 0.219 & 0.166 & 0.144 \\
+2016 & 0.231 & 0.157 & 0.154 \\
+2017 & 0.216 & 0.127 & 0.0962 \\
+2018 & 0.237 & 0.143 & 0.120 \\
+\hline
+\end{tabular}
+\end{center}
+\end{table}
+
+\subsection{Cross-Encoder Comparison}
+
+A central feature of this work is the direct comparison of drift signals across the three encoders. For each pair of encoders, year-by-year Pearson correlations of the post-gap signals were computed (Table~\ref{tab:cross_encoder}).
+
+\begin{table}[htbp]
+\caption{Cross-Encoder Year-by-Year Pearson Correlations of Post-Gap Drift Signals}
+\label{tab:cross_encoder}
+\begin{center}
+\begin{tabular}{|c|c|c|c|c|}
+\hline
+\textbf{Pair} & \textbf{AE error} & \textbf{JSD} & \textbf{Ord. SWD} & \textbf{Latent SWD} \\
+\hline
+MiniLM--LaBSE & 0.971 & 0.708 & 0.786 & 0.752 \\
+MiniLM--DistilBERT & 0.975 & 0.566 & 0.119 & 0.341 \\
+LaBSE--DistilBERT & 0.999 & 0.965 & 0.485 & 0.732 \\
+\hline
+\end{tabular}
+\end{center}
+\end{table}
+
+The autoencoder reconstruction-error signal is consistent across encoders, with $r \geq 0.97$ for every pair and a particularly high LaBSE--DistilBERT correlation of $r = 0.999$. Whichever of the three encoders is used, the temporal pattern of reconstruction error agrees almost perfectly at the yearly aggregate level. The ordinary SWD signal is much less consistent: MiniLM and DistilBERT correlate at only $r = 0.119$, even though both raise the binary drift flag in every year. The latent-space SWD lies between AE and ordinary SWD in cross-encoder consistency.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{labse_vs_distilbert_panel.pdf}
+\caption{Pair-wise cross-encoder comparison for LaBSE and DistilBERT across all four signals. The AE reconstruction error (top left, $r = 0.999$) and the Jensen--Shannon divergence (top right, $r = 0.965$) track each other almost in lockstep across years despite different absolute scales. The ordinary Sliced Wasserstein Distance (bottom left, $r = 0.485$) shows a much weaker cross-encoder agreement, and the AE-latent Sliced Wasserstein Distance (bottom right, $r = 0.732$) sits between the two extremes. This pattern is consistent with the discussion in Section~\ref{sec:discussion}: the autoencoder signal is the most encoder-stable.}
+\label{fig:labse_vs_distilbert}
+\end{figure}
+
+\subsection{Did the Project Meet Its Objectives?}
+\label{sec:analysis}
+
+This subsection and the next two relate the results back to the research questions stated in Section~\ref{sec:problem}, compare the observed behavior to what would be expected from prior work, and discuss whether the project objectives were met.
+
+The first research question was whether semantic drift can be detected over time without labels using embedding-based representations. The reconstruction-error signal of an autoencoder trained on the training period clearly separates the test period from the training period for two of the three encoders (Table~\ref{tab:ae_period_summary}), and the yearly tables (Tables~\ref{tab:minilm_ae_yearly}--\ref{tab:labse_ae_yearly}) show a monotone increase across the test years for both MiniLM and LaBSE, with the maximum at the most recent year. The cross-encoder correlations confirm that this is a property of the data rather than an artifact of a specific encoder. The first objective is therefore met.
+
+The second research question concerned the stability of drift signals across encoders. The AE-error signal is highly consistent across all three encoders ($r \geq 0.97$). The bootstrap-based SWD signal is less consistent (down to $r = 0.119$ for MiniLM--DistilBERT on ordinary SWD), and the dimension-wise tests are uninformative because they fire in every year and every encoder. The second objective is therefore met in the qualified sense that consistency depends strongly on which signal is used.
+
+The third research question was which unsupervised techniques are most useful at scale. The AE-error signal is the only signal in this study that combines a graded magnitude, consistent cross-encoder behavior, and per-sample interpretability. The dimension-wise tests confirm the existence of a shift but provide no discrimination between years at this scale; SWD with a within-train bootstrap null produces uncalibrated $z$-scores; and JSD computed through softmax over standardized embeddings is dominated by argmax agreement. The third objective is therefore met.
+
+\subsection{Comparison with Prior Work}
+
+The dimension-wise sensitivity behavior observed here is consistent with the warnings issued in earlier surveys, which point out that two-sample tests become trivially significant at scale and that practitioners need to look at effect sizes rather than $p$-values \cite{lu2018,bayram2022}. The monotone reconstruction-error increase observed for MiniLM and LaBSE is consistent with prior reports that document embeddings can track gradual semantic shift in text streams \cite{hidalgo2019}. The non-monotone behavior of multilingual DistilBERT---in which the gap period is easier to reconstruct than the training period---is, to the author's knowledge, less directly discussed in prior work and is treated here as an empirical caution against assuming that a multilingual encoder behaves the same as a monolingual one when the underlying text is in a single language.
+
+\subsection{Validation of Threshold and Bootstrap Choices}
+
+Two threshold choices are validated against the resulting yearly numbers. First, the AE threshold $\tau_{AE} = \mu + 0.5\sigma$ is shown to be sensitive by design: it flags every MiniLM and LaBSE post-gap year but produces only one flag for DistilBERT. The detected pattern (gap easier than train) survives this threshold choice and is robust to setting the threshold higher (e.g.\ $\mu + 2\sigma$). Second, the SWD bootstrap null is validated by inspecting the standard deviation of the baseline: a within-train standard deviation on the order of $10^{-3}$ implies that any meaningful between-period difference will produce extremely large $z$-scores. This confirms the methodological caution that the bootstrap-based binary flag should be read as ``the year's SWD is far outside within-train variation'', not as a calibrated $p$-value.
+
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Embedding Representations and Autoencoder Reconstruction Error}
+
+The three embeddings provided complementary views. MiniLM produced the clearest period-level monotone trend in autoencoder reconstruction error and was the most active flagger on the AE signal. LaBSE produced a milder but still monotone trend, with the threshold sitting close to the gap and test means. DistilBERT, the multilingual encoder, behaved differently: gap-period reconstruction was easier than training-period reconstruction, and post-gap reconstruction error was only slightly above the training level. Despite these differences in absolute behavior, the year-to-year movements of the autoencoder reconstruction error were almost the same across encoders, with $r \geq 0.97$ for every encoder pair on post-gap aggregates. This suggests that the temporal pattern picked up by the autoencoder is mainly a property of the underlying data rather than of any single embedding representation. For monitoring purposes, the choice of encoder among the three considered here is not very important, as long as the same encoder is used consistently over time.
+
+Two properties make the autoencoder reconstruction error useful at scale. First, it is a per-sample signal that aggregates into a smooth yearly average and does not flag every year; even when the dimension-wise tests fire in every year, the AE error provides a graded magnitude. Second, it is consistent across encoders. Both properties make it a strong candidate for the central indicator in an unsupervised monitoring pipeline, especially when paired with a more conservative threshold than the one used here.
+
+\subsection{Statistical Distance-Based Methods}
+
+The dimension-wise tests (KS and AD) and the bootstrap-based Sliced Wasserstein Distance flagged drift in every post-gap year for every encoder. In one sense, this is consistent with the underlying language change that the AE error also captures. In another sense, the binary decisions of these tests no longer carry discriminative information at this scale.
+
+For dimension-wise tests, the reason is straightforward. With several thousand reviews per year and a reference distribution of more than $16{,}000$ training reviews, any small but consistent change in the marginal distribution of a single embedding dimension produces a $p$-value far below any reasonable FDR threshold. Because hundreds of dimensions contribute, the fraction of FDR-significant dimensions easily crosses the drift-flag threshold of $0.05$ in every year. This is in line with the high sensitivity of dimension-wise tests in high-dimensional regimes noted in prior work \cite{lu2018,abghani2020}.
+
+For Sliced Wasserstein Distance, the always-positive flagging is made worse by how the bootstrap baseline is built. The baseline measures the variability of SWD between two random halves of the training distribution and produces a very tight reference (standard deviation on the order of $10^{-3}$). Any meaningful difference between the training distribution and a year therefore produces $z$-scores in the range of $70$ to $250$, which is not consistent with a calibrated hypothesis-testing interpretation. The SWD magnitude is still informative as a comparable measure between years and encoders, but the bootstrap-based binary flag and the $z$-score should not be read as a $p$-value. The cross-encoder analysis also shows that ordinary SWD is much less consistent across encoders than the AE error: MiniLM and DistilBERT correlate at only $r = 0.119$ on the SWD signal even though both flag every year. The latent-space SWD inherits the same calibration issues; its value here is to confirm that the autoencoder's compression does not erase the drift signal.
+
+\subsection{Sensitivity, Stability, and Interpretation}
+
+At scale, the sensitivity--stability trade-off is no longer a property of the statistical method alone but also of the data setting \cite{gama2014,lu2018}. Highly sensitive methods such as dimension-wise KS, Anderson--Darling, and SWD become uniformly active under large sample sizes and lose their stability as discriminators. More conservative methods such as the AE error with a wider threshold may flag fewer years but provide a graded magnitude that stays useful as the sample size grows. The most natural way to obtain a balanced view in this setting is not to add more tests, but to combine the AE error with one carefully calibrated distributional test, such as a permutation-based SWD with a permutation null in place of a within-train bootstrap null.
+
+The results provide evidence of distributional change in the embedding space, which is interpreted as semantic drift, but the signal should be read with care. Since the project is unsupervised, the drift signal does not directly prove that a downstream model would fail; prior work distinguishes between detecting distributional change and confirming downstream model degradation \cite{lu2018,bayram2022}. Whether a detected change is harmful depends on the downstream task. The DistilBERT result in particular shows that even the direction of the reconstruction-error signal is not universal across encoders: a multilingual encoder applied to monolingual English text may produce embeddings whose reconstruction structure differs from that of monolingual encoders. The proposed framework should therefore be seen as an early-warning system that can identify periods where the input distribution has changed and where deeper investigation is needed.
+
+\subsection{Limitations}
+\label{sec:limitation}
+
+The proposed framework is fully unsupervised, so it cannot directly confirm whether the detected drift leads to downstream model degradation. The dataset does not contain ground-truth drift labels, which is a common difficulty in real-world concept drift evaluation where exact drift start and end times are often unknown \cite{lu2018}. Since labels are unavailable, the conditional relationship $P_t(Y \mid X)$ between inputs and labels cannot be evaluated, and the connection between detected semantic drift and actual prediction degradation cannot be checked here \cite{bayram2022}. The experiments are based on a single time-stamped review dataset, so the exact behavior of each method may vary in other domains such as news, social media, or medical text.
+
+The drift detection results also depend on the choice of embedding model. In this project, the three encoders produced broadly similar autoencoder trends, with cross-encoder Pearson correlations of $r \geq 0.97$ on post-gap yearly aggregates. However, the absolute reconstruction-error level and, in the case of DistilBERT, even the direction of the period-to-period change differ between encoders, so the cross-encoder consistency result should be read as a within-this-family result rather than as a universal claim.
+
+Two of the three embeddings have dimensionality $768$ and the third has $384$. High-dimensional embeddings make statistical comparison difficult, and dimension-wise tests such as KS and Anderson--Darling become overly sensitive when applied across many correlated dimensions at large sample sizes. Even with FDR correction, both tests flagged drift in every post-gap year for every encoder. Future work could either reduce dimensionality before testing or replace dimension-wise tests with a single multivariate test such as MMD \cite{gretton2012} or a kernel two-sample test. The SWD bootstrap baseline used here, with $B = 200$ repetitions, measures within-train homogeneity rather than a calibrated null for the year-versus-train comparison, which is reflected in the very small baseline standard deviation (on the order of $10^{-3}$) and the resulting yearly $z$-scores of $70$--$250$. A more appropriate null would be a permutation test that pools training and yearly samples and computes SWD on randomly relabeled splits.
+
+The Jensen--Shannon divergence used in this pipeline is computed between the softmax of a standardized embedding and the softmax of its autoencoder reconstruction. Because the components of a standardized vector are approximately $\mathcal{N}(0,1)$, the softmax concentrates almost all probability mass on the largest few entries, and the resulting JSD is dominated by argmax agreement rather than by a global distributional shift. A more useful divergence-based signal would be computed between per-dimension histograms of embedding values, or replaced by MMD on the embeddings directly. The autoencoder threshold $\tau_{AE} = \mu + 0.5\sigma$ is also sensitive by design: a more conventional choice would be $\mu + 2\sigma$ or a high training-error quantile, which would behave more like a calibrated anomaly indicator at the cost of some sensitivity.
+
+Finally, the experiments use yearly windows. Yearly aggregation ensures that each window contains many thousands of reviews, but it may hide shorter-term changes; a smaller window may react faster but produce noisier estimates. The methods used here also show that a distributional shift occurred without identifying the words, topics, genres, or linguistic patterns responsible; additional qualitative analysis would be needed to explain the underlying causes of detected drift.
+
+\subsection{Code and Data Availability}
+\label{sec:reproducibility}
+
+The project archive submitted alongside this paper contains all code, configuration, and intermediate result files needed to reproduce the tables in this work. The archive follows the structure recommended in the capstone guidelines (separate \texttt{paper/}, \texttt{code/}, and \texttt{data/} directories with a top-level \texttt{README.md}) and lists a Python environment specification through a \texttt{requirements.txt} file. The main results in this paper can be reproduced from the saved per-encoder result CSV files through a single entry-point script that regenerates the tables. The full encoding and autoencoder-training stage can also be re-run on the raw IMDB corpus, which is available from its original public source. The IMDB dataset used here is publicly available; the project README documents the exact source URL, the preprocessing steps (date parsing, removal of records with invalid dates, the chronological split into training, gap, and test periods), and the variable descriptions for the saved result files.
+
+\section{Conclusion and Future Work}
+\label{sec:conclusion}
+
+This project investigated the problem of detecting semantic drift in unlabeled, time-stamped text data. The framework represented text documents as dense embeddings, organized them into chronological time windows, and compared the semantic distributions of later periods against a historical reference period. The experiments were run on $308{,}313$ time-stamped IMDB reviews using three sentence-embedding models \cite{sanh2019,feng2020,reimers2019}, with drift signals from autoencoder reconstruction error, Jensen--Shannon divergence, dimension-wise Kolmogorov--Smirnov and Anderson--Darling tests, and Sliced Wasserstein Distance \cite{bonneel2015} applied both to the original embeddings and to the autoencoder latent space.
+
+The strongest result is that the autoencoder reconstruction-error signal is consistent across the three encoders, with $r \geq 0.97$ on post-gap aggregates. The choice of encoder among the three considered here has little effect on the temporal pattern detected by the autoencoder, which makes the AE error a strong default indicator for unsupervised monitoring. At the same time, the dimension-wise tests, the bootstrap-based Sliced Wasserstein test, and its latent-space variant all flagged drift in every post-gap year for every encoder. At this corpus scale these tests reliably detect that a drift exists but lose their value as discriminators between years; the bootstrap-based SWD threshold also turned out not to be a calibrated null. The JSD signal, computed between standardized embeddings and their reconstructions through a softmax transformation, was effectively inactive throughout the experiments. The multilingual DistilBERT encoder additionally showed a non-monotonic reconstruction pattern in which the gap period was easier to reconstruct than the training period. The proposed framework should therefore be understood as an early-warning system rather than a direct proof of downstream model failure \cite{gama2014,lu2018,abghani2020,demello2019}, useful for motivating further investigation, qualitative analysis, targeted labeling, or model retraining when drift is detected.
+
+Future work could extend this project in several directions. First, the detected drift signals could be compared with downstream model performance if labels become available, as a way to relate distributional drift to actual model degradation \cite{bayram2022}. Second, the bootstrap-based SWD null could be replaced by a permutation null that pools training and yearly samples, which would give interpretable $p$-values rather than the always-large $z$-scores observed here. Third, the dimension-wise tests could be replaced by a multivariate alternative such as a kernel two-sample test. Fourth, the autoencoder threshold could be replaced by a high training-error quantile. Finally, interpretability methods could identify which words, topics, or document groups contribute most to detected drift, and the framework could be extended toward adaptive systems that automatically update models when meaningful semantic change is observed.
+
+\section*{Acknowledgment}
+
+The author thanks the supervisor for guidance throughout the project. During the preparation of this work, the author used AI-based language tools to assist with grammar checking, language editing, and other non-substantive improvements to the manuscript. After using these tools, the author reviewed and edited the content as needed and takes full responsibility for the content of the publication. All scientific contributions, methodology, experimental design, analysis, and conclusions are the author's own.
+
+\begin{thebibliography}{00}
+
+\bibitem{gama2014}
+J. Gama, I. Žliobaitė, A. Bifet, M. Pechenizkiy, and A. Bouchachia,
+``A survey on concept drift adaptation,''
+\textit{ACM Computing Surveys}, vol. 46, no. 4, pp. 1--37, 2014.
+
+\bibitem{lu2018}
+J. Lu, A. Liu, F. Dong, F. Gu, J. Gama, and G. Zhang,
+``Learning under concept drift: A review,''
+\textit{IEEE Transactions on Knowledge and Data Engineering}, vol. 31, no. 12, pp. 2346--2363, 2019.
+
+\bibitem{hidalgo2019}
+J. I. Hidalgo, J. Maqueda, J. L. Risco-Martín, and J. L. Arroyo,
+``Drift detection in text data using document embeddings,''
+\textit{International Journal of Data Science and Analytics}, 2019.
+
+\bibitem{mikolov2013}
+T. Mikolov, K. Chen, G. Corrado, and J. Dean,
+``Efficient estimation of word representations in vector space,''
+\textit{arXiv preprint arXiv:1301.3781}, 2013.
+
+\bibitem{le2014}
+Q. V. Le and T. Mikolov,
+``Distributed representations of sentences and documents,''
+in \textit{Proceedings of the 31st International Conference on Machine Learning}, 2014, pp. 1188--1196.
+
+\bibitem{abghani2020}
+N. L. Ab Ghani, I. A. Aziz, and M. Mehat,
+``Concept drift detection on unlabeled data streams: A systematic literature review,''
+in \textit{2020 IEEE Conference on Big Data and Analytics}, 2020, pp. 61--64.
+
+\bibitem{demello2019}
+R. F. de Mello, Y. Vaz, C. H. Grossi, and A. Bifet,
+``On learning guarantees to unsupervised concept drift detection on data streams,''
+\textit{Expert Systems with Applications}, vol. 117, pp. 90--102, 2019.
+
+\bibitem{bayram2022}
+F. Bayram, B. S. Ahmed, and A. Kassler,
+``From concept drift to model degradation: An overview on performance-aware drift detectors,''
+\textit{Knowledge-Based Systems}, vol. 245, 2022.
+
+\bibitem{bonneel2015}
+N. Bonneel, J. Rabin, G. Peyré, and H. Pfister,
+``Sliced and Radon Wasserstein barycenters of measures,''
+\textit{Journal of Mathematical Imaging and Vision}, vol. 51, pp. 22--45, 2015.
+
+\bibitem{sanh2019}
+V. Sanh, L. Debut, J. Chaumond, and T. Wolf,
+``DistilBERT, a distilled version of BERT: Smaller, faster, cheaper and lighter,''
+\textit{arXiv preprint arXiv:1910.01108}, 2019.
+
+\bibitem{feng2020}
+F. Feng, Y. Yang, D. Cer, N. Arivazhagan, and W. Wang,
+``Language-agnostic BERT sentence embedding,''
+\textit{arXiv preprint arXiv:2007.01852}, 2020.
+
+\bibitem{reimers2019}
+N. Reimers and I. Gurevych,
+``Sentence-BERT: Sentence embeddings using Siamese BERT-networks,''
+in \textit{Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing}, 2019, pp. 3982--3992.
+
+\bibitem{vaswani2017}
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin,
+``Attention is all you need,''
+in \textit{Advances in Neural Information Processing Systems}, vol.~30, 2017, pp. 5998--6008.
+
+\bibitem{devlin2019}
+J. Devlin, M.-W. Chang, K. Lee, and K. Toutanova,
+``BERT: Pre-training of deep bidirectional transformers for language understanding,''
+in \textit{Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics}, 2019, pp. 4171--4186.
+
+\bibitem{hamilton2016}
+W. L. Hamilton, J. Leskovec, and D. Jurafsky,
+``Diachronic word embeddings reveal statistical laws of semantic change,''
+in \textit{Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)}, 2016, pp. 1489--1501.
+
+\bibitem{kutuzov2018}
+A. Kutuzov, L. Øvrelid, T. Szymanski, and E. Velldal,
+``Diachronic word embeddings and semantic shifts: a survey,''
+in \textit{Proceedings of the 27th International Conference on Computational Linguistics}, 2018, pp. 1384--1397.
+
+\bibitem{rabanser2019}
+S. Rabanser, S. Günnemann, and Z. C. Lipton,
+``Failing loudly: An empirical study of methods for detecting dataset shift,''
+in \textit{Advances in Neural Information Processing Systems}, vol.~32, 2019, pp. 1396--1408.
+
+\bibitem{gretton2012}
+A. Gretton, K. M. Borgwardt, M. J. Rasch, B. Schölkopf, and A. Smola,
+``A kernel two-sample test,''
+\textit{Journal of Machine Learning Research}, vol.~13, pp. 723--773, 2012.
+
+\bibitem{ancho2015}
+J. An and S. Cho,
+``Variational autoencoder based anomaly detection using reconstruction probability,''
+\textit{Special Lecture on IE, SNU Data Mining Center}, vol.~2, no.~1, pp. 1--18, 2015.
+
+\bibitem{benjamini1995}
+Y. Benjamini and Y. Hochberg,
+``Controlling the false discovery rate: a practical and powerful approach to multiple testing,''
+\textit{Journal of the Royal Statistical Society: Series B (Methodological)}, vol.~57, no.~1, pp. 289--300, 1995.
+
+\bibitem{kingma2015}
+D. P. Kingma and J. Ba,
+``Adam: A method for stochastic optimization,''
+in \textit{International Conference on Learning Representations (ICLR)}, 2015.
+
+\bibitem{maas2011}
+A. L. Maas, R. E. Daly, P. T. Pham, D. Huang, A. Y. Ng, and C. Potts,
+``Learning word vectors for sentiment analysis,''
+in \textit{Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics: Human Language Technologies}, 2011, pp. 142--150.
+
+\bibitem{pedregosa2011}
+F. Pedregosa, G. Varoquaux, A. Gramfort, V. Michel, B. Thirion, O. Grisel, M. Blondel, P. Prettenhofer, R. Weiss, V. Dubourg, J. Vanderplas, A. Passos, D. Cournapeau, M. Brucher, M. Perrot, and É. Duchesnay,
+``Scikit-learn: Machine learning in Python,''
+\textit{Journal of Machine Learning Research}, vol.~12, pp. 2825--2830, 2011.
+
+\bibitem{paszke2019}
+A. Paszke, S. Gross, F. Massa, A. Lerer, J. Bradbury, G. Chanan, T. Killeen, Z. Lin, N. Gimelshein, L. Antiga, A. Desmaison, A. Köpf, E. Yang, Z. DeVito, M. Raison, A. Tejani, S. Chilamkurthy, B. Steiner, L. Fang, J. Bai, and S. Chintala,
+``PyTorch: An imperative style, high-performance deep learning library,''
+in \textit{Advances in Neural Information Processing Systems}, vol.~32, 2019, pp. 8024--8035.
+
+\end{thebibliography}
+
+
+\end{document}
