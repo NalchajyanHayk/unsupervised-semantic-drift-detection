@@ -1,22 +1,27 @@
 # Language in Motion: Semantic Drift Detection
 
-This repository contains the code for the capstone project **Language in Motion: Unsupervised Detection of Semantic Drift in Text Data**. The project studies how the semantic distribution of time-stamped text changes over time when labels are not available.
+This repository contains the capstone project **Language in Motion: Unsupervised Detection of Semantic Drift in Text Data**. The project studies how the semantic distribution of time-stamped text changes over time without labeled data.
 
-The experiments use IMDB reviews with review dates. Reviews are encoded with three sentence encoders, grouped by year, and compared against an early historical reference period. The pipeline evaluates semantic drift using autoencoder reconstruction error, Jensen-Shannon divergence, dimension-wise Kolmogorov-Smirnov and Anderson-Darling tests, and Sliced Wasserstein Distance in both the original embedding space and the autoencoder latent space.
+The workflow uses IMDB reviews with dates, encodes them with three sentence encoders, groups them by year, and compares later years against an early historical reference period. The pipeline evaluates semantic drift with:
+
+- autoencoder reconstruction error
+- Jensen-Shannon divergence
+- Kolmogorov-Smirnov tests
+- Anderson-Darling tests
+- Sliced Wasserstein Distance in the original embedding space
+- Sliced Wasserstein Distance in the autoencoder latent space
 
 ## Project Objective
 
-The objective is to build a reproducible unsupervised framework for detecting semantic drift in time-stamped text data. The project asks whether semantic changes can be detected without labels, how stable drift signals are across different embedding models, and which unsupervised drift measures are useful at corpus scale.
+The goal is to build a reproducible unsupervised framework for semantic drift detection in time-stamped text data and compare how stable the detected drift is across multiple embedding models.
 
-The paper evaluates three encoders:
+The project uses these encoders:
 
 - `all-MiniLM-L6-v2`
 - `LaBSE`
 - `distilbert-base-multilingual-cased`
 
-The main finding reported in the paper is that autoencoder reconstruction error gives the most stable year-by-year signal across encoders, while high-sensitivity statistical tests and bootstrap-based SWD tend to flag all post-gap years at this data scale.
-
-## Repository Structure
+## Current Repository Structure
 
 ```text
 .
@@ -26,32 +31,52 @@ The main finding reported in the paper is that autoencoder reconstruction error 
 │       ├── reviews_encoded_all-MiniLM-L6-v2.csv
 │       ├── reviews_encoded_LaBSE.csv
 │       └── reviews_encoded_distilbert-base-multilingual-cased.csv
-├── outputs/
+├── paper/
+│   ├── main.tex
+│   ├── references.bib
 │   ├── figures/
-│   ├── tables/
-│   └── models/
-├── scripts/
-│   ├── run_pipeline.py
-│   └── run_visualizations.py
-├── src/
+│   └── paper.pdf
+├── project/
 │   ├── preprocessing/
-│   │   └── encoder_pipeline.py
-│   └── drift_detection/
-│       ├── config.py
-│       ├── data.py
-│       ├── models.py
-│       ├── pipeline.py
-│       ├── statistical_tests.py
-│       ├── wasserstein.py
-│       ├── visualization.py
-│       ├── comparison.py
-│       ├── plot_theme.py
-│       └── table_export.py
-├── run_full_pipeline.sh
-├── run_models.py
-├── run_models.sh
+│   │   ├── data_preprocessing.py
+│   │   ├── encoder_pipeline.py
+│   │   └── io_utils.py
+│   ├── models/
+│   │   ├── models.py
+│   │   ├── statistical_tests.py
+│   │   └── wasserstein.py
+│   ├── utils/
+│   │   ├── comparison.py
+│   │   ├── config.py
+│   │   ├── data.py
+│   │   ├── helpers.py
+│   │   ├── pipeline.py
+│   │   ├── run_models.py
+│   │   └── run_pipeline.py
+│   ├── visualization/
+│   │   ├── plot_theme.py
+│   │   ├── run_visualizations.py
+│   │   ├── table_export.py
+│   │   └── visualization.py
+│   └── execution/
+│       ├── common.py
+│       ├── run_models.py
+│       ├── run_pipeline.py
+│       └── run_visualizations.py
+├── run_pipeline.sh
+├── README.md
 └── requirements.txt
 ```
+
+## Directory Roles
+
+- `project/preprocessing/`: raw data loading, preprocessing, and sentence-encoder generation
+- `project/models/`: core statistical and model logic only
+- `project/utils/`: shared config, data handling, pipeline orchestration, and comparisons
+- `project/visualization/`: plotting, table export, and visualization regeneration
+- `project/execution/`: runnable entry points for full pipeline, reduced models, and visualization-only workflows
+- `data/`: raw and encoded datasets
+- `paper/`: paper assets and LaTeX files
 
 ## Required Software and Libraries
 
@@ -61,9 +86,15 @@ Recommended Python version:
 Python 3.13.5
 ```
 
-The code requires Python 3.10 or newer. The project was run in a Python 3.13.5 environment.
+The code requires Python 3.10 or newer.
 
-Required Python libraries:
+Install dependencies with:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+Main libraries used:
 
 ```text
 numpy==2.1.2
@@ -78,21 +109,9 @@ sentence-transformers==3.1.1
 tqdm==4.67.1
 ```
 
-Install dependencies with:
-
-```bash
-python -m pip install -r requirements.txt
-```
-
-If `requirements.txt` is not pinned yet, install the full set manually:
-
-```bash
-python -m pip install numpy==2.1.2 pandas==2.3.2 matplotlib==3.9.4 scipy==1.16.2 scikit-learn==1.7.2 statsmodels==0.14.6 torch==2.8.0 joblib==1.5.2 sentence-transformers==3.1.1 tqdm==4.67.1
-```
-
 ## Input Data
 
-The review data comes from the Kaggle dataset:
+The review data comes from the Kaggle IMDB dataset:
 
 ```text
 https://www.kaggle.com/datasets/lakshmi25npathi/imdb-dataset-of-50k-movie-reviews
@@ -104,43 +123,44 @@ Place the raw review file at:
 data/IMDB_reviews.json
 ```
 
-The raw data must contain at least these columns:
+The raw data must contain at least:
 
 ```text
 review_date
 review_text
 ```
 
-The preprocessing code supports both standard JSON arrays and JSONL-style files. The default encoding step processes the first `300000` reviews and writes one encoded CSV per sentence encoder into `data/encoded/`.
+The preprocessing code supports standard JSON arrays and JSONL-style files.
 
-## Reproducing the Results
+## How to Run the Project
 
 ### 1. Create and activate a virtual environment
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+python -m venv venv
+source venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-### 2. Encode the raw reviews
+### 2. Run the full pipeline with the shell script
 
-Run:
+This is the main entry point for the full project:
 
 ```bash
-bash run_full_pipeline.sh
+./run_pipeline.sh
 ```
 
-This script:
+This script will:
 
-- installs the Python requirements
-- creates output directories
-- loads `data/IMDB_reviews.json`
-- encodes the first `300000` reviews with MiniLM, LaBSE, and DistilBERT
-- saves encoded files in `data/encoded/`
+1. read `data/IMDB_reviews.json`
+2. create or reuse `data/encoded/`
+3. encode the first `300000` reviews with the three reference encoders
+4. save one encoded CSV per encoder in `data/encoded/`
+5. run the full drift-detection and evaluation pipeline
+6. regenerate visualization outputs from the generated tables
 
-The encoded outputs are:
+The expected encoded files are:
 
 ```text
 data/encoded/reviews_encoded_all-MiniLM-L6-v2.csv
@@ -148,11 +168,42 @@ data/encoded/reviews_encoded_LaBSE.csv
 data/encoded/reviews_encoded_distilbert-base-multilingual-cased.csv
 ```
 
-You can also run the encoder directly:
+The expected output folders are:
+
+```text
+outputs/figures/
+outputs/tables/
+outputs/models/
+outputs/logs/
+```
+
+### 3. Run the full pipeline directly with Python
+
+If you want to run the full execution layer directly instead of the shell script:
+
+```bash
+python project/execution/run_pipeline.py \
+  --raw-json data/IMDB_reviews.json \
+  --encoded-dir data/encoded \
+  --input-files \
+    data/encoded/reviews_encoded_all-MiniLM-L6-v2.csv \
+    data/encoded/reviews_encoded_LaBSE.csv \
+    data/encoded/reviews_encoded_distilbert-base-multilingual-cased.csv \
+  --names MiniLM LaBSE DistilBERT \
+  --output-dir outputs \
+  --max-reviews 300000
+```
+
+### 4. Run preprocessing and encoding only
+
+You can run the encoder pipeline directly:
 
 ```bash
 python - <<'PY'
-from src.preprocessing.encoder_pipeline import preprocess_and_encode
+import sys
+sys.path.insert(0, "project")
+
+from preprocessing.encoder_pipeline import preprocess_and_encode
 
 preprocess_and_encode(
     json_file="data/IMDB_reviews.json",
@@ -163,29 +214,48 @@ preprocess_and_encode(
 PY
 ```
 
-### 3. Run the full drift detection pipeline
+### 5. Run only the reduced model workflow
 
-Run all methods from the paper:
+This runs the autoencoder and Wasserstein-based workflow only:
 
 ```bash
-python -u scripts/run_pipeline.py \
+python project/execution/run_models.py \
+  --raw-json data/IMDB_reviews.json \
+  --encoded-dir data/encoded \
   --input-files \
-  data/encoded/reviews_encoded_all-MiniLM-L6-v2.csv \
-  data/encoded/reviews_encoded_LaBSE.csv \
-  data/encoded/reviews_encoded_distilbert-base-multilingual-cased.csv \
+    data/encoded/reviews_encoded_all-MiniLM-L6-v2.csv \
+    data/encoded/reviews_encoded_LaBSE.csv \
+    data/encoded/reviews_encoded_distilbert-base-multilingual-cased.csv \
   --names MiniLM LaBSE DistilBERT \
-  --output-dir outputs
+  --output-dir outputs \
+  --max-reviews 300000
 ```
 
-This runs:
+If encoded files already exist and you want to skip re-encoding:
 
-- autoencoder reconstruction error
-- Jensen-Shannon divergence
-- Kolmogorov-Smirnov tests
-- Anderson-Darling tests
-- ordinary Sliced Wasserstein Distance
-- autoencoder latent-space Sliced Wasserstein Distance
-- cross-encoder comparisons
+```bash
+python project/execution/run_models.py --skip-encoding
+```
+
+### 6. Regenerate visualizations only
+
+If tables already exist and you only want to refresh figures:
+
+```bash
+python project/execution/run_visualizations.py \
+  --output-dir outputs \
+  --names MiniLM LaBSE DistilBERT
+```
+
+Useful options:
+
+```bash
+python project/execution/run_visualizations.py --skip-comparisons
+python project/execution/run_visualizations.py --skip-per-encoder
+python project/execution/run_visualizations.py --std-multiplier 0.5
+```
+
+## Default Experiment Settings
 
 The default temporal split is:
 
@@ -210,53 +280,11 @@ SWD max samples:           10000 per distribution
 random seed:               42
 ```
 
-### 4. Run only autoencoder and Sliced Wasserstein models
+## Notes
 
-For the smaller model-only workflow, run:
-
-```bash
-bash run_models.sh
-```
-
-or:
-
-```bash
-python -u run_models.py \
-  --input-files \
-  data/encoded/reviews_encoded_all-MiniLM-L6-v2.csv \
-  data/encoded/reviews_encoded_LaBSE.csv \
-  data/encoded/reviews_encoded_distilbert-base-multilingual-cased.csv \
-  --names MiniLM LaBSE DistilBERT \
-  --output-dir outputs
-```
-
-This runs only:
-
-- autoencoder reconstruction error
-- ordinary Sliced Wasserstein Distance
-- autoencoder latent-space Sliced Wasserstein Distance
-
-To adjust the autoencoder threshold, change the standard-deviation multiplier:
-
-```bash
-python -u run_models.py --threshold-std-multiplier 0.5
-```
-
-To reduce or increase SWD runtime, change the sample cap:
-
-```bash
-python -u run_models.py --swd-max-samples 10000
-```
-
-## How Figures and Tables Were Generated
-
-The full pipeline writes figures and tables automatically under:
-
-```text
-outputs/figures/
-outputs/tables/
-outputs/models/
-```
+- `run_pipeline.sh` is the recommended full-project command.
+- The encoded CSV files are written directly into `data/encoded/`.
+- The visualization regeneration step does not rerun preprocessing or model training; it rebuilds figures from existing output tables.
 
 Per-encoder outputs are written into:
 
