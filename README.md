@@ -1,7 +1,4 @@
-# Language in Motion: Unsupervised Detection of Semantic Drift in Text Data
-
-Unsupervised detection of semantic drift in time-stamped text data using text embeddings and distribution-based statistical methods.
-
+# Language in Motion: Semantic Drift Detection
 
 This repository contains the code for the capstone project **Language in Motion: Unsupervised Detection of Semantic Drift in Text Data**. The project studies how the semantic distribution of time-stamped text changes over time when labels are not available.
 
@@ -94,6 +91,12 @@ python -m pip install numpy==2.1.2 pandas==2.3.2 matplotlib==3.9.4 scipy==1.16.2
 ```
 
 ## Input Data
+
+The review data comes from the Kaggle dataset:
+
+```text
+https://www.kaggle.com/datasets/lakshmi25npathi/imdb-dataset-of-50k-movie-reviews
+```
 
 Place the raw review file at:
 
