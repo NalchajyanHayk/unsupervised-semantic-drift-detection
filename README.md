@@ -34,8 +34,7 @@ The project uses these encoders:
 ├── outputs/
 │   ├── figures/
 │   ├── tables/
-│   ├── models/
-│   └── logs/
+│   └── models/
 ├── paper/
 │   ├── main.tex
 │   ├── references.bib
