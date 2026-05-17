@@ -1,0 +1,8 @@
+year,minilm_jsd,minilm_jsd_drift,distilbert_jsd,distilbert_jsd_drift
+2011,0.048034497,False,0.019234873,False
+2012,0.05331329,False,0.019976577,False
+2013,0.048967544,False,0.022502074,False
+2014,0.04925176,False,0.02329186,False
+2015,0.050852757,False,0.023256814,False
+2016,0.050769612,False,0.024774244,False
+2017,0.053860683,False,0.032343585,False

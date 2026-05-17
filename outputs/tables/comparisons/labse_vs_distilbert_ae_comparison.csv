@@ -1,0 +1,9 @@
+year,labse_ae_error,labse_ae_drift,distilbert_ae_error,distilbert_ae_drift
+2011,0.50354016,True,0.23291542,False
+2012,0.50494224,True,0.236852,False
+2013,0.50495356,True,0.24366072,False
+2014,0.51569784,True,0.25178275,False
+2015,0.5160548,True,0.25158936,False
+2016,0.5147854,True,0.25457293,False
+2017,0.5752275,True,0.33239523,False
+2018,0.6613756,True,0.46151942,True

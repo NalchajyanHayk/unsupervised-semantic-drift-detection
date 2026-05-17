@@ -1,0 +1,9 @@
+year,minilm_ae_error,minilm_ae_drift,distilbert_ae_error,distilbert_ae_drift
+2011,0.70271105,True,0.23291542,False
+2012,0.7129005,True,0.236852,False
+2013,0.7038989,True,0.24366072,False
+2014,0.70672035,True,0.25178275,False
+2015,0.70813304,True,0.25158936,False
+2016,0.709404,True,0.25457293,False
+2017,0.72236115,True,0.33239523,False
+2018,0.7731042,True,0.46151942,True

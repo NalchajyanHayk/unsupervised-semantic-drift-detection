@@ -1,0 +1,9 @@
+year,minilm_ae_error,minilm_ae_drift,labse_ae_error,labse_ae_drift
+2011,0.70271105,True,0.50354016,True
+2012,0.7129005,True,0.50494224,True
+2013,0.7038989,True,0.50495356,True
+2014,0.70672035,True,0.51569784,True
+2015,0.70813304,True,0.5160548,True
+2016,0.709404,True,0.5147854,True
+2017,0.72236115,True,0.5752275,True
+2018,0.7731042,True,0.6613756,True
